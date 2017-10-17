@@ -24,10 +24,6 @@ The requirement to handle occasional spikes in traffic presents a design challen
 
 A better approach is to put the incoming requests into a buffer, and let the buffer act as a load leveler. With this design, the Delivery Scheduler must be able to the maximum ingestion rate over short periods, but the backend services only need to handle the maximum sustained load of 5K. By buffering at the front end, the backend services shouldn't need to handle large spikes in traffic.
 
-## Asynchronous operations over HTTP
- 
-[talk about 200 Accepted here]
-
 ## Ingestion
 
 At the scale the development team is targeting, Event Hubs is a good choice, because of its high ingestion rate. Our tests showed that ingress per event hub was about 32k ops/sec with latency around 90ms. The delivery scheduler is also capable of sharding across more than one event hub. Ingress with 2 event hubs was 45k ops/sec with latency below 100 ms. (As with all performance metrics, there can be multiple factors that affect performance, so don't interpret these numbers as a benchmark.)
@@ -53,7 +49,7 @@ What does this mean for the drone delivery workflow? To get the full benefit of 
 
 ## Workflow
 
-We looked at three options for reading and processing the messages: Event Processor Host, Service Bus queues, and the IoTHub React library. (Spoiler alert: We eventually chose IoTHub React, for reasons that we'll get into.) 
+We looked at three options for reading and processing the messages: Event Processor Host, Service Bus queues, and the IoTHub React library. We ended up choosing IoTHub React, for reasons that will be explained. 
 
 ### Event Processor Host
 
@@ -96,8 +92,6 @@ Further load testing might have discovered the root cause and allowed us to reso
 
 Akka Streams is also a very natural programming model for streaming events from Event Hubs. Instead of looping through a batch of events, you define a set of operations on events, and let Akka Streams handle the streaming. 
 
-[Show code here]
-
 IoTHub React uses a different checkpoint strategy than Event Host Processor. The checkpoint logic resides in a sink, which is the terminating stage in a pipeline. The design of Akka Streams allows the pipeline to continue streaming data while the sink is writing the checkpoint. That means the upstream processing stages don't need to wait on the checkpoint. You can configure chcekpoint to occur after a timeout or after a certain number of messages have been processed. 
  
 Considerations for scaling:
@@ -108,8 +102,39 @@ Considerations for scaling:
 - Customers with higher scale requirements than the number of partitions in event hub, can implement a hashing algorithm in the dispatcher and deploy more than one readers per partition pointing to different storage accounts. The result of this configuration is that multiple readers will pick up messages overlapping among them but will only process the messages that belong to them, according to their hashing algorithm.
 - Correct sizing of nodes and the right density of them in VMS is important aspect on the dispatcher deployment. The dispatcher is memory and thread bound, because of the akka framework. 
 
-## Handling failures
+## Handling failures 
 
-- 
+There are three general classes of failure to consider.
 
+1. A downstream service has a transient failure, such as a network timeout. 
 
+2. A downstream service has a non-transient failure. Non-transient failures include normal error conditions, crashes, unhandled exceptions, and so forth. 
+
+3. The Scheduler service faults (for example, a node crashes). 
+
+In the case of a transient failure, the Scheduler service should simply retry the operation. If the operation still fails after a certain number of attempts, it's considered a non-transient failure.  
+ 
+When a non-transient failure occurs, the entire business transaction must be marked as a failure. It may be necessary to undo other steps in the same transaction that already succeeded. 
+ 
+If the Scheduler service itself crashes, Kubernetes will bring up a new instance. However, any transactions that were already in progress must be resumed. 
+
+## Compensating transactions
+
+If a non-transient failure happens, the current transaction might be in a *partially failed* state, where one or more steps already completed successfully. For example, if the Drone service already scheduled a drone, the drone must be canceled.
+
+It then becomes necessary to undo the steps that succeeded, using a [Compensating Transaction](../patterns/compensating-transaction.md). In some cases, this must be done by an external system or even by a manual process. Failures may trigger other actions as well, such as notifying the user by text or email, or sending an alert to an operations dashboard. 
+
+If the logic for compensating transactions is complex, consider creating a separate service that is responsible for this process. In the Drone Delivery application, the Scheduler service puts failed operations onto a dedicated queue, where they can be processed out of band. 
+
+## Idempotent vs non-idempotent operations
+
+In order not to lose any requests, the ingestion service must guarantee that all messages are processed at least once.
+
+- Service Bus Queues can guarantee at-least-once delivery by using PeekLock mode.
+- Event Hubs can guarantee at-least-once delivery if the client checkpoints correctly.
+
+If the Scheduler service crashes, it may be in the middle of processing one or more client requests. Those messages will be picked up by another instance of the Scheduler and reprocessed. What happens if a request is processed twice? It's important to avoid duplicating any work. After all, we don't want the system to send two drones for the same package.
+
+One approach is to design all operations to be idempotent. An operation is idempotent if it can be called multiple times without producing additional side-effects after the first call. In other words, a client can invoke the operation once, twice, or many times, and the result will be the same. Essentially, the service should ignore duplicate calls. The HTTP specification states that GET, PUT, and DELETE methods must be idempotent. POST methods are not guaranteed to be idempotent. In particular, if a POST method creates a new resource, there is generally no guarantee that this operation is idempotent. To make a method with side effects idempotent, the service must have a way to detect duplicate calls.
+
+Another option is to track the progress of every transaction in a durable store. Whenever a message is processed, check the durable store to find The [Scheduler Agent Supervisor pattern](../architecture/patterns/scheduler-agent-supervisor.md) is one way to implement this approach. This approach adds complexity to the workflow logic.
