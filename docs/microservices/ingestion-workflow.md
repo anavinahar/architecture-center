@@ -1,10 +1,10 @@
 # Ingestion and workflow
 
-In this section, we describe how the Drone Delivery application handles incoming client requests. This involves ingesting the requests at high volume, and then initiating a workflow for each request. The application must be able to service requests in a reliable and efficient manner, including handling failures
+In this section, we describe how the Drone Delivery application handles incoming client requests. This involves ingesting the requests at high volume, and then initiating a workflow for each request. The application must be able to service requests in a reliable and efficient manner, including handling failures. 
 
 ![](./images/ingestion-workflow.png)
 
-The Delivery Scheduler service is responsible for accepting user requests and executing a workflow. For each request, the workflow consists of several steps, carried out by calling the various backend services:
+When you decompose and application in microservices, it's common for a single operation to consist of multiple steps that span services. In the Drone Delivery application, scheduling a new delivery requires the following steps:
 
 1. Check the status of the customer's account (Account service).
 2. Create a new package entity (Package service).
@@ -12,7 +12,15 @@ The Delivery Scheduler service is responsible for accepting user requests and ex
 4. Schedule a drone for pickup (Drone service).
 5. Create a new delivery entity (Delivery service).
 
-If any of these services returns an error code or experiences a non-transient failure, the delivery cannot be scheduled. An error code might indicate an expected error condition &mdash; for example, the customer's account is suspended mdash; or an unexpected server error (HTTP 5xx). A service might also be unavailable, causing the network call to time out. 
+## Challenges
+
+- **Load leveling**. Too many client requests can overwhelm the system with inter-service network traffic. It can also overwhelm backend dependencies such as storage or remote services. These may react by throttling the services calling them, creating back pressure in the system. Therefore, it's important to load level the requests coming into the system, by putting them into a buffer or queue for processing. 
+
+- **Guaranteed delivery**. To avoid dropping any client requests, the ingestion component must guarantee at-least-once delivery of messages. 
+
+- **Error handling**. If any of the services returns an error code or experiences a non-transient failure, the delivery cannot be scheduled. An error code might indicate an expected error condition &mdash; for example, the customer's account is suspended mdash; or an unexpected server error (HTTP 5xx). A service might also be unavailable, causing the network call to time out. 
+
+## Ingestion
 
 Based on business requirements, the development team identified the following non-functional requirements for ingestion:
 
@@ -24,9 +32,7 @@ The requirement to handle occasional spikes in traffic presents a design challen
 
 A better approach is to put the incoming requests into a buffer, and let the buffer act as a load leveler. With this design, the Delivery Scheduler must be able to the maximum ingestion rate of 100K requests/second over short periods, but the backend services only need to handle the maximum sustained load of 10K. By buffering at the front end, the backend services shouldn't need to handle large spikes in traffic.
 
-## Ingestion
-
-At the scale the development team is targeting, Event Hubs is a good choice, because of its high ingestion rate. Our tests showed that ingress per event hub was about 32k ops/sec with latency around 90ms. The delivery scheduler is also capable of sharding across more than one event hub. Ingress with 2 event hubs was 45k ops/sec with latency below 100 ms. (As with all performance metrics, there can be multiple factors that affect performance, so don't interpret these numbers as a benchmark.)
+At the scale the development team is targeting, Event Hubs is a good choice for load leveling, because of its high ingestion rate. Our tests showed that ingress per event hub was about 32k ops/sec with latency around 90ms. The delivery scheduler is also capable of sharding across more than one event hub. Ingress with 2 event hubs was 45k ops/sec with latency below 100 ms. (As with all performance metrics, there can be multiple factors that affect performance, so don't interpret these numbers as a benchmark.)
 
 It's important to understand how Event Hubs can achieve such high throughput, because that affects how a client should consume messages from Event Hubs. Event Hubs does not implement a *queue*. Rather, it implements an *event stream*. 
 
@@ -54,28 +60,14 @@ Event Processor Host is designed for message batching. The application implement
 
 ![](./images/partition-lease.png)
 
+The Event Processor Host calls the application's `IEventProcessor.ProcessEventsAsync` method with batches of event messages. The application controls when to checkpoint inside the `ProcessEventsAsync` method, and the Event Processor Host writes the checkpoints to Azure storage. 
 
-As events are written to the event hub, the Processor Host calls `IEventProcessor.ProcessEventsAsync` with batches of event messages. It waits for `ProcessEventsAsync` to return before call again with the next batch. This approach simplifies the programming model, because your `IEventProcessor` implementation does not have to be reentrant. However, it also means that the event processor handles one batch at a time, and this gates the speed at which the Processor Host can pump messages.
+Within a partitition, Event Processor Host waits for `ProcessEventsAsync` to return before calling again with the next batch. This approach simplifies the programming model, because your `IEventProcessor` implementation does not have to be reentrant. However, it also means that the event processor handles one batch at a time, and this gates the speed at which the Processor Host can pump messages.
 
 > [!NOTE] 
-> The Processor Host doesn't actually *wait* in the sense of blocking a thread. The `ProcessEventsAsync` method is asynchronous, so the Processor Host can do other work while the method is completing. But it won't deliver another batch of messages from that partition until the method returns.
+> The Processor Host doesn't actually *wait* in the sense of blocking a thread. The `ProcessEventsAsync` method is asynchronous, so the Processor Host can do other work while the method is completing. But it won't deliver another batch of messages from that partition until the method returns. 
 
-The application controls checkpointing by calling `CheckpointAsync` inside `ProcessEventsAsync`. The Event Processor Host writes the checkpoints to Azure storage. 
-
-```csharp
-async Task IEventProcessor.ProcessEventsAsync(PartitionContext context, IEnumerable<EventData> messages)
-{
-    foreach (EventData eventData in messages)
-    {
-        // Process messages
-
-        // Checkpoint
-        await context.CheckpointAsync();
-    }
-}
-```
-
-In the drone application, the messages in a batch can be processed in parallel. But waiting for the whole batch to complete can still cause a bottleneck. Processing can only be as fast as the slowest message within a batch. Any variation in response times can create a "long tail," where a few slow responses drag down the entire system. And in fact, our performance tests showed that we did not achieve our target throughput using this approach. This does *not* mean that you should avoid using Event Processor Host. But for high throughput, avoid doing any long-running tasks inside the `ProcesssEventsAsync` method. Process each batch quickly.
+In the drone application, a batch of messages can be processed in parallel. But waiting for the whole batch to complete can still cause a bottleneck. Processing can only be as fast as the slowest message within a batch. Any variation in response times can create a "long tail," where a few slow responses drag down the entire system. And in fact, our performance tests showed that we did not achieve our target throughput using this approach. This does *not* mean that you should avoid using Event Processor Host. But for high throughput, avoid doing any long-running tasks inside the `ProcesssEventsAsync` method. Process each batch quickly.
 
 ## IotHub React 
 
@@ -144,4 +136,4 @@ If the Scheduler service crashes, it may be in the middle of processing one or m
 
 One approach is to design all operations to be idempotent. An operation is idempotent if it can be called multiple times without producing additional side-effects after the first call. In other words, a client can invoke the operation once, twice, or many times, and the result will be the same. Essentially, the service should ignore duplicate calls. The HTTP specification states that GET, PUT, and DELETE methods must be idempotent. POST methods are not guaranteed to be idempotent. In particular, if a POST method creates a new resource, there is generally no guarantee that this operation is idempotent. To make a method with side effects idempotent, the service must have a way to detect duplicate calls.
 
-Another option is to track the progress of every transaction in a durable store. Whenever a message is processed, check the durable store to find The [Scheduler Agent Supervisor pattern](../architecture/patterns/scheduler-agent-supervisor.md) is one way to implement this approach. This approach adds complexity to the workflow logic.
+Another option is to track the progress of every transaction in a durable store. Whenever a message is processed, look up the state in the durable store. The [Scheduler Agent Supervisor pattern](../patterns/scheduler-agent-supervisor.md) is one way to implement this approach. However, this approach adds complexity to the workflow logic.

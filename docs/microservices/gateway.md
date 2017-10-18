@@ -12,13 +12,30 @@ In a microservices architecture, how should a client communicate with the variou
 - Each individual service must handle concerns such as authentication, SSL, and client rate limiting. 
 - Services must expose a client-friendly protocol such as HTTP or WebSocket. This limits the choice of [communication protocols](./interservice-communication.md) 
 
-To address these problems, an API gateway sits between the clients and the backend services. A gateway can perform a number of different functions. Depending on your scenario, you may not need all of them. These functions can be grouped into the following patterns:
+To address these problems, an API gateway sits between the clients and the backend services. A gateway can perform a number of different functions. Depending on your scenario, you may not need all of them. 
+
+
+- Layer 7 routing of client requests to backend services
+- SSL termination
+- Validating tokens for authentication
+
+
+These functions can be grouped into the following patterns:
 
 [Gateway Routing](../patterns/gateway-routing.md). Use the gateway to route requests to one or more backend services, using layer 7 routing. The gateway provides a single endpoint for clients, and helps to decouple clients from services. 
 
 [Gateway Aggregation](../patterns/gateway-aggregation.md). Use the gateway to aggregate multiple individual requests into a single request. This pattern applies when a single operation requires calls to multiple backend services. The client sends one request to the gateway. The gateway dispatches requests to the various backend services, and then aggregates the results and sends them back to the client. This helps to reduce chattiness between the client and the backend. 
 
-[Gateway Offloading](../patterns/gateway-offloading.md). Use the gateway to offload functionality from individual services to the gateway, particularly cross-cutting concerns. Some of the functions that a gateay can provide include SSL termination, authentication, certificate management, IP whitelisting, rate limiting, and logging and monitoring. It can be useful to consolidate these functions into one place, rather than making every service responsible for implementing them. This is paricularly true for features that requires specialized skills to implement correctly, such as authentication and authorization. 
+[Gateway Offloading](../patterns/gateway-offloading.md). Use the gateway to offload functionality from individual services to the gateway, particularly cross-cutting concerns. Some of the functions that a gateway can provide include SSL termination, authentication, certificate management, IP whitelisting, rate limiting, and logging and monitoring. It can be useful to consolidate these functions into one place, rather than making every service responsible for implementing them. This is paricularly true for features that requires specialized skills to implement correctly, such as authentication and authorization. 
+
+
+## Considerations
+
+What Gateway features do you require
+
+
+
+
 
 In the rest of this section, we'll look at some of the main options for implementing an API gateway.
 
