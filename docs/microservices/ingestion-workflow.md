@@ -8,9 +8,9 @@ The Delivery Scheduler service is responsible for accepting user requests and ex
 
 1. Check the status of the customer's account (Account service).
 2. Create a new package entity (Package service).
-3. Create a new delivery entity (Delivery service).
-4. Check whether any third-party transportation is required for this delivery, based on the pickup and delivery locations (Third-party Transportation service).
-5. Schedule a drone for pickup (Drone service).
+3. Check whether any third-party transportation is required for this delivery, based on the pickup and delivery locations (Third-party Transportation service).
+4. Schedule a drone for pickup (Drone service).
+5. Create a new delivery entity (Delivery service).
 
 If any of these services returns an error code or experiences a non-transient failure, the delivery cannot be scheduled. An error code might indicate an expected error condition &mdash; for example, the customer's account is suspended mdash; or an unexpected server error (HTTP 5xx). A service might also be unavailable, causing the network call to time out. 
 
@@ -18,21 +18,19 @@ Based on business requirements, the development team identified the following no
 
 - Sustained throughput of 10K requests/sec.
 - Handle spikes of up to 100K/sec without dropping client requests or timing out.
-- [Latency?]
+- Less than 500ms latency in the 99th percentile.
 
 The requirement to handle occasional spikes in traffic presents a design challenge. In theory, the system could be scaled out to handle the maximum expected traffic. However, provisioning that many resources woud be very inefficient. Most of the time, the application will not need that much capacity, so there would be idle cores and excess database resources, costing money without adding value.
 
-A better approach is to put the incoming requests into a buffer, and let the buffer act as a load leveler. With this design, the Delivery Scheduler must be able to the maximum ingestion rate over short periods, but the backend services only need to handle the maximum sustained load of 5K. By buffering at the front end, the backend services shouldn't need to handle large spikes in traffic.
+A better approach is to put the incoming requests into a buffer, and let the buffer act as a load leveler. With this design, the Delivery Scheduler must be able to the maximum ingestion rate of 100K requests/second over short periods, but the backend services only need to handle the maximum sustained load of 10K. By buffering at the front end, the backend services shouldn't need to handle large spikes in traffic.
 
 ## Ingestion
 
 At the scale the development team is targeting, Event Hubs is a good choice, because of its high ingestion rate. Our tests showed that ingress per event hub was about 32k ops/sec with latency around 90ms. The delivery scheduler is also capable of sharding across more than one event hub. Ingress with 2 event hubs was 45k ops/sec with latency below 100 ms. (As with all performance metrics, there can be multiple factors that affect performance, so don't interpret these numbers as a benchmark.)
 
-Service Bus with premium messaging is fast, but still not as fast as Event Hubs. You can see performance results in this blog post. However, keep in mind that these results do not use Service Bus features such as deduplication, peek lock (which is needed to guarantee at-least-once delivery), or dead letter queuing. Also at this scale, Event Hubs is more cost effective than Service Bus. 
+It's important to understand how Event Hubs can achieve such high throughput, because that affects how a client should consume messages from Event Hubs. Event Hubs does not implement a *queue*. Rather, it implements an *event stream*. 
 
-However, it's important to understand that Event Hubs is able to achieve this level of throughput because it has fundamentally different semantics than Service Bus queues. This has consequences for how the workload is implemented.
-
-With a queue, an individual consumer can remove a message from the queue, and the next consumer will get the next message on the queue. You can use a competing consumer pattern to process messages in parallel and improve scalability. For greater resiliency, the consumer holds a lock on the message and releases the lock when it's done processing the message. If the consumer fails &mdash; for example, the node it's running on crashes &mdash; the lock times out and the message goes back onto the queue. 
+With a queue, an individual consumer can remove a message from the queue, and the next consumer will get the next message on the queue. You can use a [Competing Consumers pattern](../patterns/competing-consumers.md) to process messages in parallel and improve scalability. For greater resiliency, the consumer holds a lock on the message and releases the lock when it's done processing the message. If the consumer fails &mdash; for example, the node it's running on crashes &mdash; the lock times out and the message goes back onto the queue. 
 
 ![](./images/queue-semantics.png)
 
@@ -46,45 +44,38 @@ Event Hubs is not designed for competing consumers. Although multiple consumers 
 
 What does this mean for the drone delivery workflow? To get the full benefit of Event Hubs, the Delivery Scheduler cannot wait for each message to be processed before moving onto the next. If it does that, it will spend most of its time waiting for network calls to complete. Instead, it needs to process batches of messages in parallel, using asynchronous calls to the backend services. As we'll see, choosing the right checkpointing strategy is also important.  
 
-
 ## Workflow
 
-We looked at three options for reading and processing the messages: Event Processor Host, Service Bus queues, and the IoTHub React library. We ended up choosing IoTHub React, for reasons that will be explained. 
+We looked at three options for reading and processing the messages: Event Processor Host, Service Bus queues, and the IoTHub React library. We chose IoTHub React, but to understand why, it helps to start with Event Processor Host. 
 
 ### Event Processor Host
 
-Event Processor Host is designed for message batching. The application implements the `IEventProcessor` interface, and the Processor Host creates one `IEventProcessor` instance for each partition in the event hub. The Processor Host invokes the `IEventProcessor.ProcessEventsAsync` method with a batch of event messages.
-
-Horizontal scaling is achieved by having each Processor Host instance compete to hold a lease on the available partitions. Over time, partition leases are distributed evenly across Processor Host instances. 
+Event Processor Host is designed for message batching. The application implements the `IEventProcessor` interface, and the Processor Host creates one `IEventProcessor` instance for each partition in the event hub. Horizontal scaling is achieved by having each Processor Host instance compete to hold a lease on the available partitions. Over time, partition leases are distributed evenly across Processor Host instances. 
 
 ![](./images/partition-lease.png)
 
-Event Processor Host writes checkpoints to Azure storage. The application controls when checkpointing occurs by calling `CheckpointAsync` inside the ProcessEventsAsync method.
 
-For each batch of events, the processor host waits until the `ProcessEventsAsync` method returns before calling the method again with the next batch. This means that the processor host behaves in a synchronous manner as far as each instance of IEventProcessor is concerned.
+As events are written to the event hub, the Processor Host calls `IEventProcessor.ProcessEventsAsync` with batches of event messages. It waits for `ProcessEventsAsync` to return before call again with the next batch. This approach simplifies the programming model, because your `IEventProcessor` implementation does not have to be reentrant. However, it also means that the event processor handles one batch at a time, and this gates the speed at which the Processor Host can pump messages.
 
-> [AZURE.NOTE] 
-> The processor host doesn't actually *wait* in the sense of blocking a thread. The `ProcessEventsAsync` method is asynchronous, so the processor host continues to do other work while the method is completing. But it won't deliver another batch of messages to that instance until the method returns.
+> [!NOTE] 
+> The Processor Host doesn't actually *wait* in the sense of blocking a thread. The `ProcessEventsAsync` method is asynchronous, so the Processor Host can do other work while the method is completing. But it won't deliver another batch of messages from that partition until the method returns.
 
-This approach simplifies the programming model, because your `IEventProcessor` implementation does not have to be reentrant. However, it also means that the event processor handles one batch at a time, and this gates the speed at which the Processor Host can pump messages.
+The application controls checkpointing by calling `CheckpointAsync` inside `ProcessEventsAsync`. The Event Processor Host writes the checkpoints to Azure storage. 
 
-In our scenario, each request message is independent, so we can process them in parallel. But waiting for an entire batch to complete can still cause a bottleneck,because processing can only be as fast as the slowest message within a batch. Any variation in response times can result in a "long tail" where a few slow responses drag down the entire system. And in fact, our performance tests showed that we did not achieve our target throughput using this approach. 
+```csharp
+async Task IEventProcessor.ProcessEventsAsync(PartitionContext context, IEnumerable<EventData> messages)
+{
+    foreach (EventData eventData in messages)
+    {
+        // Process messages
 
-This does *not* mean that you should avoid using Event Processor Host. The real lesson to avoid performing long-running tasks inside the `ProcesssEventsAsync` method. 
+        // Checkpoint
+        await context.CheckpointAsync();
+    }
+}
+```
 
-### Service Bus queues
-
-Our next idea was to copy the messages from Event Hubs over to a Service Bus queue, and then read the messages from Service Bus to process them. This idea may seem contradictory, given that we had already decided not to use Service Bus for ingestion. However, the idea was to leverage the different strengths of each service: Use Event Hubs to absorb spikes of heavy traffic, while taking advantage of the queue semantics in Service Bus to process the workload, using a competing consumer model. Remember that our target for sustained throughput is less than our expected peak load.
- 
-With this approach, our proof-of-concept implementation achieved about 4K operations per second [NEED ACTUAL NUMBERS HERE]. These tests used mock backend services that did not do any real work, but simply added a fixed amount of latency per service. Note that our performance numbers were much less than the theoretical maximum for Service Bus. Possible reasons for the discrepancy include:
-
-- Not having optimal values for various client parameters, such as the connection pool limit, the degree of parallelization, the prefetch count, and the batch size.
-
-- Network I/O bottlenecks.
-
-- Use of PeekLock mode rather than ReceiveAndDelete, which was needed to ensure at-least-once delivery of messages
-
-Further load testing might have discovered the root cause and allowed us to resolve these issues. However, a parallel effort using IotHub React showed promise, so we switched to that approach.
+In the drone application, the messages in a batch can be processed in parallel. But waiting for the whole batch to complete can still cause a bottleneck. Processing can only be as fast as the slowest message within a batch. Any variation in response times can create a "long tail," where a few slow responses drag down the entire system. And in fact, our performance tests showed that we did not achieve our target throughput using this approach. This does *not* mean that you should avoid using Event Processor Host. But for high throughput, avoid doing any long-running tasks inside the `ProcesssEventsAsync` method. Process each batch quickly.
 
 ## IotHub React 
 
@@ -99,8 +90,24 @@ Considerations for scaling:
 - To make it easier to scale out, each instance of the dispatcher service is assigned a single
 
 - To scale the dispatcher has to be deployed as a statefulsets in kubernetes. Like Deployments, StatefulSets manage Pods that are based on an identical container spec. However, although their specs are the same, the Pods in a StatefulSet are not interchangeable. Each Pod has a persistent identifier that it maintains across any rescheduling. In the case of dispatcher the identifier for the container is the partition id that is assigned to each pod running the workflow. Each pod will execute the messages for its own partition. Pods can overlap on the VM giving a cost effective way to distribute workload in a high density model. This is easy to manage through image updates and deployment cycles. 
+
 - Customers with higher scale requirements than the number of partitions in event hub, can implement a hashing algorithm in the dispatcher and deploy more than one readers per partition pointing to different storage accounts. The result of this configuration is that multiple readers will pick up messages overlapping among them but will only process the messages that belong to them, according to their hashing algorithm.
+
 - Correct sizing of nodes and the right density of them in VMS is important aspect on the dispatcher deployment. The dispatcher is memory and thread bound, because of the akka framework. 
+
+### Service Bus queues
+
+Another option that we considered was to copy messages from Event Hubs into a Service Bus queue, and then have the Scheduler service read the messages from Service Bus. This idea may seem contradictory, given that we had already decided not to use Service Bus for ingestion. However, the idea was to leverage the different strengths of each service: Use Event Hubs to absorb spikes of heavy traffic, while taking advantage of the queue semantics in Service Bus to process the workload, using a competing consumers model. Remember that our target for sustained throughput is less than our expected peak load.
+ 
+With this approach, our proof-of-concept implementation achieved about 4K operations per second. These tests used mock backend services that did not do any real work, but simply added a fixed amount of latency per service. Note that our performance numbers were much less than the theoretical maximum for Service Bus. Possible reasons for the discrepancy include:
+
+- Not having optimal values for various client parameters, such as the connection pool limit, the degree of parallelization, the prefetch count, and the batch size.
+
+- Network I/O bottlenecks.
+
+- Use of PeekLock mode rather than ReceiveAndDelete, which was needed to ensure at-least-once delivery of messages
+
+Further load testing might have discovered the root cause and allowed us to resolve these issues. However, IotHub React met our performance target, so we chose that option.
 
 ## Handling failures 
 
