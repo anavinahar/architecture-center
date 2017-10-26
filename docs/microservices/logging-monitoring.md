@@ -9,13 +9,43 @@ Some issues that are common to MSA
 - Latency caused cascading retries
 
 
-System metrics - CPU, memory, threads
+Why is monitoring more challenging in MSA?
+- Single request goes through multiple services
+- Bottlenecks harder to pinpoint
+- You generally don't know which node a particular container will run in
+- You need to collect metrics at the container level, the node level, the cluster level
 
-Container metrics
 
-Application metrics - latency, number of requests, number of errors
+Kubernetes controllers will monitor the system for pod health and number of replicas.
 
-Application logging
+Kubelet collects stats
+
+
+
+
+
+
+
+Types of logs to collect:
+
+    System metrics - CPU, memory, threads
+    
+    Container metrics
+    
+    Application metrics - latency, number of requests, number of errors
+    
+    Application logging
+    
+    Dependent service metrics
+    
+    Structured logging
+    
+    Client metrics
+    
+You can categorize these into metrics and text-based logs. Metrics are numerical values that can be analyzed, find averages and trends. Text based logs are good for root cause analysis, debugging, forensics. 
+
+It's good for logs to be structured (JSON) rather than raw text - however you may not control all of the logging, other components in the system (Nginx, IIS, whatever) may be creating unstructured logs. One challengs is how to aggregate them.
+
 
 Correlation IDs
 
@@ -24,37 +54,43 @@ Correlation IDs
     - For performance analysis, analyze the entire flow
     - A/B testing, be able to analyze metrics for experimental features
     - Pass them in HTTP headers OR put them in message metadata
+        - There are currently no standard headers for correlation IDs
     - It's good when correlation headers show parent/child relationships so that you can see the hierarchy of calls
     - How to generate correlation IDs?
-        - Custom code. Each service looks for the header incoming. If not there, generate it. Then pass it along
-        - AI SDK injects 
-        
+        - Custom code. Each service looks for the header incoming. If not there, generate it. Then pass it along. Include in logging statements
+        - AI SDK injects into headers and into logging
+        - Service Mesh adds to headers and in service mesh logging
+        - Process: (a) generate the ID, (b) pass along IDs in HTTP headers and include IDs in async messages, (c) Include the correlation ID in logging statements. Depending on frameworks/libraries, some of this may be done for you
+        - Consider how you will aggregate logs - you may want to standardize on schema for correlation ID in logs. Use structured logging (JSON)
 
     Example: https://github.com/openzipkin/b3-propagation
 
-Dependent service metrics
-
-Structured logging
-
-Client metrics
 
 
 ## Considerations
 
 Configuration and management
     - Managed service vs deployed in the cluster
+    - You can do monitoring inside the cluster and also push to OMS 
 
 Ingestion rate
-    - Will the data be downsampled automatically
-    - Can you do sampling in the client?
-    - Will you be throttled
-    - What is the granularity of the data.
+
+    - What is the "raw" rate at which the system can intake telemetry events?
+    - If the rate is exceeded, what happens? (Throttling, downsampling)
+    - Approaches to reduce the load on the telemetry system:
+        - Aggregation of metrics (statistical data)
+        - Sampling - process only a percentage of the events
+        - Batching - to reduce the number of calls to the telemetry service
+
+    - What is the granularity of the data. 
 
 What can it log 
     - Prometheus only supports floats, not strings. 
     - 
 
 Storage costs
+
+    - Date should eventually be moved to long-term storage so it is available for retrospective analysis
 
 Resiliency - where is the data stored, can it be lost if a node goes down?
 
@@ -68,6 +104,13 @@ Dashboard
 - If you are writing telemetry data and logs to more than one location, can the dashboard show all of them and correlate?
 
 
+Separate monitoring components from services as much as possible
+
+Use a logging abstraction that you can plug in a pipeline by configuration
+
+Handle batching and aggregation in the pipeline, not directly in the app code. Pipeline can also enrich the events with extra information (e.g. correlation ID)
+
+
 ## Technical options
 
 Application Insights
@@ -78,10 +121,42 @@ Application Insights
         - Ingestion sampling reduces storage but not telemetry traffic
     - There is also a daily cap - this is only meant as a final protection against too much data
 
+    Application Insights will automatically go into adaptive sampling mode when ingest throughput is exceeded (this will cap at 32k ops/sec for the largest plan).  This will result in accurate metrics, but only a portion of the raw data being captured.  
+    
+
 Prometheus - time series database 
+    - Integrated with kubernetes
+    - linkerd / istio integration
+    - Does not support string data, only floats
+
+Influxdb
+
+    influxdb allow automatic downsampling to retain old data at a lower fidelity (masimms)
+    Supports string data + metrics
+    Horizontal scaling is only supported in the commercial version
+
+Grafana - dashboard
+
+Zipkin? - distributed tracing
+
+
+
+## Our architecture
+
+System metrics captured by kubernetes and sent to prometheus with grafana
+    - Prometheus log apis for app metrics and exporter for system metrics 
+
+Application logs go to standard out, kubelet (?) writes to local file system, fluentd ships the logs to elasticsearch running in the cluster
+
 
 
 ## Best practices
+
+Use labels to distinguish types of pods (front end, application, gateway, infrastructure services)
+
+
+
+
 
 AI
 
@@ -93,3 +168,4 @@ AI uses correlation IDs - All services should propagate this.
 
 https://docs.microsoft.com/en-us/azure/application-insights/application-insights-correlation
 
+Using AI at scale: https://blogs.msdn.microsoft.com/azurecat/2017/05/11/azure-monitoring-and-analytics-at-scale/
