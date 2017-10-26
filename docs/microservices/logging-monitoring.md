@@ -1,70 +1,42 @@
-# Logging and monitoring
+# Logging and monitoring in a microservices application
 
-Monitoring to give you a holistic view of how the system is performing. Identify bottlenecks or services that are having problems. Services may be resource constrained, experiencing failures, or overwhelmed with requests.
+In any complex application, at some point something will go wrong. The application may experience failures, or become overwhelmed with requests. Logging and monitoring should provide a holistic view of how the system behaves. 
 
-Some issues that are common to MSA
-- Network I/O limitations within the cluster
-- Resource constraints due to running multiple containers on a single node, or containers with resource caps. 
-- Backpressure. A service has a queue of requests it is processing, that causes upstream services to back up.
-- Latency caused cascading retries
+In a microservices architecture, it can be especially challenging to pinpoint the exact cause of errors or performance bottlenecks. A single user operation might span multiple services. Services may hit network I/O limits inside the cluster. A chain of calls across services may cause backpressure in the system, resulting in high latency or cascading failures. Moreover, you generally don't know which node a particular container will run in. Containers placed on the same node may be competing for limited CPU or memory. 
 
+![](./images/monitoring.png)
 
-Why is monitoring more challenging in MSA?
-- Single request goes through multiple services
-- Bottlenecks harder to pinpoint
-- You generally don't know which node a particular container will run in
-- You need to collect metrics at the container level, the node level, the cluster level
+You can categorize these into metrics and text-based logs. 
 
+*Metrics* are numerical values that can be analyzed. You can use them to observe the system in real time (or close to real time), or to analyze performance over time. 
 
-Kubernetes controllers will monitor the system for pod health and number of replicas.
+- System metrics, such as CPU, memory, garbage collection, thread count, and so on. Because services run in containers, you need to collect metrics at the container level, not just at the VM level. Fortunately, Kubernetes provides several options for collecting cluster metrics, including Heapster and [kube-state-metrics](https://github.com/kubernetes/kube-state-metrics).
+   
+- Application metrics. This includes any metrics that relevant to understanding the behavior of a service. Examples include the number of outgoing HTTP requests, request latency, message queue length, or number of transactions processed per second.
 
-Kubelet collects stats
+- Dependent service metrics. Services inside the cluster may call external services that are outside the cluster, such as managed PaaS services. You can monitor Azure services by using [Azure Monitor](/azure/monitoring-and-diagnostics/monitoring-overview). Third-party services may or may not provide any metrics. If not, you'll have to rely on your own application metrics to track statistics for latency and error rate.
+
+*Logs* are records of events that occur while the application is running. They include things like application logs (trace statements) or web server logs. Logs are primarily useful for forensics and root cause analysis. 
 
 
 
+## Correlation IDs and distributed tracing
 
+- You need them so you can trace the flow of requests and operations through the system.
+- For root cause analysis, if a problem happens in a service, you can find the upstream or downstream calls.
+- For performance analysis, analyze the entire flow
+- A/B testing, be able to analyze metrics for experimental features
+- Pass them in HTTP headers OR put them in message metadata
+    - There are currently no standard headers for correlation IDs
+- It's good when correlation headers show parent/child relationships so that you can see the hierarchy of calls
+- How to generate correlation IDs?
+    - Custom code. Each service looks for the header incoming. If not there, generate it. Then pass it along. Include in logging statements
+    - AI SDK injects into headers and into logging
+    - Service Mesh adds to headers and in service mesh logging
+    - Process: (a) generate the ID, (b) pass along IDs in HTTP headers and include IDs in async messages, (c) Include the correlation ID in logging statements. Depending on frameworks/libraries, some of this may be done for you
+    - Consider how you will aggregate logs - you may want to standardize on schema for correlation ID in logs. Use structured logging (JSON)
 
-
-
-Types of logs to collect:
-
-    System metrics - CPU, memory, threads
-    
-    Container metrics
-    
-    Application metrics - latency, number of requests, number of errors
-    
-    Application logging
-    
-    Dependent service metrics
-    
-    Structured logging
-    
-    Client metrics
-    
-You can categorize these into metrics and text-based logs. Metrics are numerical values that can be analyzed, find averages and trends. Text based logs are good for root cause analysis, debugging, forensics. 
-
-It's good for logs to be structured (JSON) rather than raw text - however you may not control all of the logging, other components in the system (Nginx, IIS, whatever) may be creating unstructured logs. One challengs is how to aggregate them.
-
-
-Correlation IDs
-
-    - You need them so you can trace the flow of requests and operations through the system.
-    - For root cause analysis, if a problem happens in a service, you can find the upstream or downstream calls.
-    - For performance analysis, analyze the entire flow
-    - A/B testing, be able to analyze metrics for experimental features
-    - Pass them in HTTP headers OR put them in message metadata
-        - There are currently no standard headers for correlation IDs
-    - It's good when correlation headers show parent/child relationships so that you can see the hierarchy of calls
-    - How to generate correlation IDs?
-        - Custom code. Each service looks for the header incoming. If not there, generate it. Then pass it along. Include in logging statements
-        - AI SDK injects into headers and into logging
-        - Service Mesh adds to headers and in service mesh logging
-        - Process: (a) generate the ID, (b) pass along IDs in HTTP headers and include IDs in async messages, (c) Include the correlation ID in logging statements. Depending on frameworks/libraries, some of this may be done for you
-        - Consider how you will aggregate logs - you may want to standardize on schema for correlation ID in logs. Use structured logging (JSON)
-
-    Example: https://github.com/openzipkin/b3-propagation
-
+Example: https://github.com/openzipkin/b3-propagation
 
 
 ## Considerations
@@ -83,6 +55,7 @@ Ingestion rate
         - Batching - to reduce the number of calls to the telemetry service
 
     - What is the granularity of the data. 
+    - Avoid any blocking calls to write logs or telemetry data. 
 
 What can it log 
     - Prometheus only supports floats, not strings. 
@@ -102,6 +75,9 @@ Data fidelity
 Dashboard
 - Do you get a holistic view of the system? 
 - If you are writing telemetry data and logs to more than one location, can the dashboard show all of them and correlate?
+
+
+Structured logging. It's good for logs to be structured (JSON) rather than raw text - however you may not control all of the logging, other components in the system (Nginx, IIS, whatever) may be creating unstructured logs. One challengs is how to aggregate them.
 
 
 Separate monitoring components from services as much as possible
