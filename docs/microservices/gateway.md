@@ -34,37 +34,19 @@ Here are some examples of functionality that could be offloaded to a gateway:
 
 ## Choosing a gateway technology
 
-
 Some of the options for implementing gateway functionality include:
 
 - [Azure Application Gateway](/azure/application-gateway/). Application Gateway is a managed load balancing service that can perform layer-7 routing and SSL termination. It also provides a web application firewall (WAF).
+
 - [Azure API Management](/azure/api-management/). API Management is a turnkey solution for publishing APIs to external and internal customers. It provides features that are useful for managing a public-facing API, including rate limiting, IP white listing, and authentication using Azure Active Directory or other identity providers. 
-- Reverse proxy server, such as Nginx or HAProxy. Nginx and HAProxy are popular reverse proxy servers that support features such as load balancing, SSL, and layer 7 routing. They are both free, open-source products, with paid editions that provide additional features and support options. Nginx and HAProxy are both mature products with rich feature sets and high performance. You can extend them with third-party modules or by writing custom scripts in Lua. Nginx also supports a JavaScript-based scripting module called NginScript.
-- Service mesh. If you are using a service mesh such as linkerd or Istio, consider the features that are provided by the ingress controller for that service mesh. For example, the Istio ingress controller supports layer 7 routing, HTTP redirects, retries, and other features.
 
 - Reverse proxy server, such as Nginx or HAProxy. Nginx and HAProxy are popular reverse proxy servers that support features such as load balancing, SSL, and layer 7 routing. They are both free, open-source products, with paid editions that provide additional features and support options. Nginx and HAProxy are both mature products with rich feature sets and high performance. You can extend them with third-party modules or by writing custom scripts in Lua. Nginx also supports a JavaScript-based scripting module called NginScript.
 
 - Service mesh. If you are using a service mesh such as linkerd or Istio, consider the features that are provided by the ingress controller for that service mesh. For example, the Istio ingress controller supports layer 7 routing, HTTP redirects, retries, and other features.
 
-- When choosing a gateway technology, consider which features you require. The options listed above all support layer 7 routing, but support for other features will vary.
-- Application Gateway and API Management are managed services. 
-- Nginx and HAProxy must be deployed and managed. 
-- 
--  gateway run in a container inside the cluster 
+When choosing a gateway technology, consider which features you require. The options listed above all support layer 7 routing, but support for other features will vary. Also consider how you will deploy and manage the gateay. Azure Application Gateway and API Management are managed services. Nginx and HAProxy can be configured to run in containers inside the cluster, or could be deployed to dedicated VMs outside of the cluster. When services are updated or new services are added, the gateway routing rules may need to be updated. Consider how this process will be managed.
 
-- Consider how you will deploy and manage the gateay. Azure Application Gateway and API Management are managed services. Nginx and HAProxy can be configured to run in containers inside the cluster, or could be deployed to dedicated VMs outside of the cluster. 
-
-- When services are updated or new services are added, the gateway routing rules may need to be updated. Consider how this process will be managed.
-
-
-
-## Reverse proxy (Nginx, HAProxy)
-
-
-
-You can run Nginx or HAProxy in containers inside the Kubernetes cluster, or run them in dedicated VMs outside of the cluster. An advantage of running them inside the cluster is that it's easy to configure and deploy &mdash; just include them as part of your deployment YAML files. You can even constrain the gateway pods to run on dedicated nodes, to maximize performance.
-
-### Deploy Nginx or HAProxy to Kubernetes
+## Deploying Nginx or HAProxy to Kubernetes
 
 You can deploy Nginx or HAProxy to Kubernetes by creating a [Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) object. 
 
@@ -109,8 +91,5 @@ Consider combining API Management with a reverse proxy, whether Nginx, HAProxy, 
 
 > [!NOTE]
 > To use API Management with Application Gateway, see [Integrate API Management in an internal VNET with Application Gateway](/azure/api-management/api-management-howto-integrate-internal-vnet-appgateway)
-
-
-
 
 
