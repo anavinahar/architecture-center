@@ -4,6 +4,8 @@ An API gateway sits between clients and services, routing requests from clients 
 
 ![](./images/gateway.png)
 
+## What is an API gateway?
+
 In a microservices architecture, how should a client communicate with the various services that compose the application? One option is for services to expose public endpoints and have clients make direct HTTP calls to them. There are potential problems with this approach, however. 
 
 - A single operation might require calls to multiple services. That can result in multiple network round trips between the client and the server, adding significant latency. 
@@ -30,8 +32,6 @@ Here are some examples of functionality that could be offloaded to a gateway:
 - Response caching
 - Web application firewall
 
-
-
 ## Choosing a gateway technology
 
 Some of the options for implementing gateway functionality include:
@@ -44,9 +44,17 @@ Some of the options for implementing gateway functionality include:
 
 - Service mesh. If you are using a service mesh such as linkerd or Istio, consider the features that are provided by the ingress controller for that service mesh. For example, the Istio ingress controller supports layer 7 routing, HTTP redirects, retries, and other features.
 
-When choosing a gateway technology, consider which features you require. The options listed above all support layer 7 routing, but support for other features will vary. Also consider how you will deploy and manage the gateay. Azure Application Gateway and API Management are managed services. Nginx and HAProxy can be configured to run in containers inside the cluster, or could be deployed to dedicated VMs outside of the cluster. When services are updated or new services are added, the gateway routing rules may need to be updated. Consider how this process will be managed.
+When choosing a gateway technology, consider the following:
 
-## Deploying Nginx or HAProxy to Kubernetes
+**Features**. The options listed above all support layer 7 routing, but support for other features will vary. 
+
+**Deployment**. Azure Application Gateway and API Management are managed services. Nginx and HAProxy will typically run in containers inside the cluster, but can also be deployed to dedicated VMs outside of the cluster. 
+
+**Management**. When services are updated or new services are added, the gateway routing rules may need to be updated. Consider how this process will be managed. Similarly considerations apply to managing SSL certificates, IP whitelists, and other aspects of configuration.
+
+## Deployment considerations
+
+### Deploying Nginx or HAProxy to Kubernetes
 
 You can deploy Nginx or HAProxy to Kubernetes by creating a [Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) object. 
 
@@ -62,7 +70,19 @@ Another alternative is to use an **Ingress Controller**. This lets you configure
 
 An advantage of using an Ingress Controller is that it abstracts the ingress rules from the implementation details of the reverse proxy. You don't need to manage configuration files or container images. Ingress Controllers are still a beta feature of Kubernetes at the time of this writing, and the feature will continue to evolve.
 
-## Azure Application Gateway
+Consider running the gateway on a dedicated set of nodes in the cluster. Benefits to this approach include:
+
+- Isolation. All inbound traffic goes to a fixed set of nodes, which can be isolated from backend services.
+
+- Stable configuration. If the gateway is misconfigured, the entire application may become unavailable. 
+
+- Performance. You may want to use a specific VM configuration for the gateway for performance reasons.
+
+- Load balancing. You can configure the external load balancer so that requests always go to a gateway node. That can save a network hop, which would otherwise happen whenever a request lands on a node that isn't running a gateway pod. This consideration applies mainly to large clusters, where the gateway runs on a relatively small fraction of the total nodes.   
+
+In Azure Container Service, this approach currently requires [ACS Engine](https://github.com/Azure/acs-engine)) which allows you to create multiple agent pools.
+
+### Azure Application Gateway
 
 To connect Application Gateway to a Kubernetes cluster in Azure:
 
@@ -77,7 +97,7 @@ To connect Application Gateway to a Kubernetes cluster in Azure:
     
 Set the instance count to 2 or more for high availability.
 
-## Azure API Management 
+### Azure API Management 
 
 To connect API Management to a Kubernetes cluster in Azure:
 
