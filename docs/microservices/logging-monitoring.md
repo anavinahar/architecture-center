@@ -8,36 +8,15 @@ In a microservices architecture, it can be especially challenging to pinpoint th
 
 You can categorize these into metrics and text-based logs. 
 
-*Metrics* are numerical values that can be analyzed. You can use them to observe the system in real time (or close to real time), or to analyze performance over time. 
+*Metrics* are numerical values that can be analyzed. You can use them to observe the system in real time (or close to real time), or to analyze performance trends over time. 
 
-- System metrics, such as CPU, memory, garbage collection, thread count, and so on. Because services run in containers, you need to collect metrics at the container level, not just at the VM level. Fortunately, Kubernetes provides several options for collecting cluster metrics, including Heapster and [kube-state-metrics](https://github.com/kubernetes/kube-state-metrics).
+- System metrics, such as CPU, memory, garbage collection, thread count, and so on. Because services run in containers, you need to collect metrics at the container level, not just at the VM level. Fortunately, Kubernetes provides several options for collecting cluster metrics, including Heapster and [kube-state-metrics][kube-state-metrics].
    
 - Application metrics. This includes any metrics that relevant to understanding the behavior of a service. Examples include the number of outgoing HTTP requests, request latency, message queue length, or number of transactions processed per second.
 
 - Dependent service metrics. Services inside the cluster may call external services that are outside the cluster, such as managed PaaS services. You can monitor Azure services by using [Azure Monitor](/azure/monitoring-and-diagnostics/monitoring-overview). Third-party services may or may not provide any metrics. If not, you'll have to rely on your own application metrics to track statistics for latency and error rate.
 
 *Logs* are records of events that occur while the application is running. They include things like application logs (trace statements) or web server logs. Logs are primarily useful for forensics and root cause analysis. 
-
-
-
-## Correlation IDs and distributed tracing
-
-- You need them so you can trace the flow of requests and operations through the system.
-- For root cause analysis, if a problem happens in a service, you can find the upstream or downstream calls.
-- For performance analysis, analyze the entire flow
-- A/B testing, be able to analyze metrics for experimental features
-- Pass them in HTTP headers OR put them in message metadata
-    - There are currently no standard headers for correlation IDs
-- It's good when correlation headers show parent/child relationships so that you can see the hierarchy of calls
-- How to generate correlation IDs?
-    - Custom code. Each service looks for the header incoming. If not there, generate it. Then pass it along. Include in logging statements
-    - AI SDK injects into headers and into logging
-    - Service Mesh adds to headers and in service mesh logging
-    - Process: (a) generate the ID, (b) pass along IDs in HTTP headers and include IDs in async messages, (c) Include the correlation ID in logging statements. Depending on frameworks/libraries, some of this may be done for you
-    - Consider how you will aggregate logs - you may want to standardize on schema for correlation ID in logs. Use structured logging (JSON)
-
-Example: https://github.com/openzipkin/b3-propagation
-
 
 ## Considerations
 
@@ -87,9 +66,40 @@ Use a logging abstraction that you can plug in a pipeline by configuration
 Handle batching and aggregation in the pipeline, not directly in the app code. Pipeline can also enrich the events with extra information (e.g. correlation ID)
 
 
+## Correlation IDs and distributed tracing
+
+As mentioned, one challenge in microservices is understanding the flow of events across services. A single operation or transaction may involve calls to multiple services. In order reconstruct the entire sequence of steps, each service should propagate a *correlation ID* that acts as a unique identitifer for that operation. The correlation ID enables [distributed tracing](http://microservices.io/patterns/observability/distributed-tracing.html) across services.
+
+The first service that receives a client request should generates the correlation ID. If the service makes an HTTP call to another service, it puts the correlation ID in a request header. Similarly, if the service sends an asynchronous message, it puts the correlation ID into the message. Downstream services continue to propagate the correlation ID, so that it flows through the entire system. In addition, all code that writes application metrics or log events should include the correlation ID.
+
+If errors or exceptions occur, the correlation ID lets you find the upstream or downstream calls that were part of the same operation. Correlation IDs also makes it possible to calculate metrics like end-to-end latency for a complete transaction, number of successful transactions per second, and percentage of failed transactions.
+
+Some considerations when implementing correlation IDs:
+
+- There is currently no standard HTTP header for correlation IDs. Your team should standardize on a custom header value. The choice may be decided by your logging/monitoring framework or the service mesh.
+
+- For asynchronous messages, if your messaging infrastructure supports adding metadata to messages, you should include the correlation ID as metadata. Otherwise, include it as part of the message schema.
+
+- Rather than a single opaque identitier, you might send a *correlation context* that includes richer information, such the caller-callee relationships. 
+
+- The Azure Application Insights SDK will automatically inject correlation IDs into HTTP headers, and includes the correlation ID in Application Insights logs. If you decide to use the correlation features built into Application Insights, some services may still need to explicity propagate the correlation ID. For more information, see [Telemetry correlation in Application Insights](/azure/application-insights/application-insights-correlation).
+   
+- If you are using Istio or linkerd as a service mesh, these technologies automatically generate correlation headers when HTTP calls are routed through the service mesh proxies. Services should forward the relevant headers. 
+
+    - Istio: [Distributed Request Tracing](https://istio-releases.github.io/v0.1/docs/tasks/zipkin-tracing.html)
+    
+    - linkerd: [Context Headers](https://linkerd.io/config/1.3.0/linkerd/index.html#http-headers)
+    
+- Consider how you will aggregate logs. You may want to standardize on a schema for including correlation IDs in logs across all services.
+
+
 ## Technical options
 
-Application Insights
+**Kubernetes** collects cluster metrics. You can use a service like Heapster or [kube-state-metrics][kube-state-metrics] to aggregate these metrics and send them to a sink.
+
+**Application Insights** is a managed service in Azure that ingests and stores telemetry data, and provides tools for analyzing and searching the data. To use Application Insights, you install an instrumentation package in your application. This packages monitors the app and sends telemetry data to the Application Insights service. It can also pull telemetry data from the host environment. 
+
+
 
     Throttles after 32k/sec. To avoid this, use sampling.
         - Throttling can lead to lost data. (Client SDKs may try to resend)
@@ -99,6 +109,8 @@ Application Insights
 
     Application Insights will automatically go into adaptive sampling mode when ingest throughput is exceeded (this will cap at 32k ops/sec for the largest plan).  This will result in accurate metrics, but only a portion of the raw data being captured.  
     
+    Built in correlation features    
+
 
 Prometheus - time series database 
     - Integrated with kubernetes
@@ -145,3 +157,8 @@ AI uses correlation IDs - All services should propagate this.
 https://docs.microsoft.com/en-us/azure/application-insights/application-insights-correlation
 
 Using AI at scale: https://blogs.msdn.microsoft.com/azurecat/2017/05/11/azure-monitoring-and-analytics-at-scale/
+
+
+<!-- links -->
+
+[kube-state-metrics]: https://github.com/kubernetes/kube-state-metrics
