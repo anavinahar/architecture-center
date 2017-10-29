@@ -15,7 +15,7 @@
     href: interservice-communication.md
   - name: API design
     href: api-design.md
-  - name: API gateway
+  - name: Gateway
     href: gateway.md
   - name: Data considerations
     href: data-considerations.md
