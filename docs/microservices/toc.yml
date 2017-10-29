@@ -15,8 +15,6 @@
     href: interservice-communication.md
   - name: API design
     href: api-design.md
-  - name: Service mesh
-    href: service-mesh.md
   - name: API gateway
     href: gateway.md
   - name: Data considerations
