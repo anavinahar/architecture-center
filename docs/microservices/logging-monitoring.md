@@ -20,51 +20,44 @@ You can categorize these into metrics and text-based logs.
 
 ## Considerations
 
-Configuration and management
-    - Managed service vs deployed in the cluster
+Here are some factors to consider when you choose a logging and monitoring solution.
+
+**Configuration and management.** Managed service vs deployed in the cluster
     - You can do monitoring inside the cluster and also push to OMS 
 
-Ingestion rate
+**Ingestion rate**. What is the throughput at which the system can ingest telemetry events? What happens if that rate is exceeded? For example, the system may throttle clients, in which case telemetry data is lost, or it may downsample the data. 
 
-    - What is the "raw" rate at which the system can intake telemetry events?
-    - If the rate is exceeded, what happens? (Throttling, downsampling)
+**Data fidelity**. How accurate are the metrics? Averages can hide outliers, especially at scale. Also, if the sampling rate is too low, it can smooth out fluctuations in the data. It may appear that 
+
+**Latency**. To enable real-time monitoring and alerts, telemetry data should be available quick. How "real-time" is the data that appears on the monitoring dashboard? A few seconds old? More than a minute?
+
+**Storage.** For logs, it may be most efficient to write the log events to ephemeral storage in the cluster, and configure an agent to ship the log files to more persistent storage.  Data should eventually be moved to long-term storage so that it's available for retrospective analysis. A microservices architecture can generate a large volume of telemetry data, so the cost of storing that data is an important consideration. Also consider how you will query the data. 
+
+**Dashboard and visualization.** Do you get a holistic view of the system, across all of the services, both within the cluster and external services? If you are writing telemetry data and logs to more than one location, can the dashboard show all of them and correlate?
+
+
+<!--
     - Approaches to reduce the load on the telemetry system:
         - Aggregation of metrics (statistical data)
         - Sampling - process only a percentage of the events
         - Batching - to reduce the number of calls to the telemetry service
 
     - What is the granularity of the data. 
+
     - Avoid any blocking calls to write logs or telemetry data. 
 
-What can it log 
-    - Prometheus only supports floats, not strings. 
-    - 
-
-Storage costs
-
-    - Date should eventually be moved to long-term storage so it is available for retrospective analysis
-
-Resiliency - where is the data stored, can it be lost if a node goes down?
-
-Latency for real-time monitoring and alerts. How "real-time" is real-time data? A few seconds? A minute?
-
-Data fidelity
-- How accurate are the statistics? Averages can hide outliers, especially at scale. 
-
-Dashboard
-- Do you get a holistic view of the system? 
-- If you are writing telemetry data and logs to more than one location, can the dashboard show all of them and correlate?
 
 
 Structured logging. It's good for logs to be structured (JSON) rather than raw text - however you may not control all of the logging, other components in the system (Nginx, IIS, whatever) may be creating unstructured logs. One challengs is how to aggregate them.
 
 
+
 Separate monitoring components from services as much as possible
 
-Use a logging abstraction that you can plug in a pipeline by configuration
+Use a logging abstraction that you can plug in a pipeline by configuration. 
 
 Handle batching and aggregation in the pipeline, not directly in the app code. Pipeline can also enrich the events with extra information (e.g. correlation ID)
-
+-->
 
 ## Correlation IDs and distributed tracing
 
@@ -97,66 +90,17 @@ Some considerations when implementing correlation IDs:
 
 **Kubernetes** collects cluster metrics. You can use a service like Heapster or [kube-state-metrics][kube-state-metrics] to aggregate these metrics and send them to a sink.
 
-**Application Insights** is a managed service in Azure that ingests and stores telemetry data, and provides tools for analyzing and searching the data. To use Application Insights, you install an instrumentation package in your application. This packages monitors the app and sends telemetry data to the Application Insights service. It can also pull telemetry data from the host environment. 
+**Application Insights** is a managed service in Azure that ingests and stores telemetry data, and provides tools for analyzing and searching the data. To use Application Insights, you install an instrumentation package in your application. This packages monitors the app and sends telemetry data to the Application Insights service. It can also pull telemetry data from the host environment. Application Insights provides built-in correlation and dependency tracking. It lets you track system metrics, application metrics, and Azure service metrics, all in one place.
 
+Be aware that Application Insights throttles if the data rate exceeds 32K events per second. A single operation may generate several telemetry events, so if your application expects a high volume traffic, it is likely to get throttled. To mitigate this problem, you can perform sampling to reduce the telemetry traffic. The tradeoff is that your metrics will be less precise. For more information, see [Sampling in Application Insights](/azure/application-insights/app-insights-sampling). You can also reduce the data volume by pre-aggregating metrics &mdash; that is, calculating statistical values such as average and standard deviation, and sending those values instead of the raw telemetry. The following blog post describes an approach to using Application Insights at scale: [Azure Monitoring and Analytics at Scale](https://blogs.msdn.microsoft.com/azurecat/2017/05/11/azure-monitoring-and-analytics-at-scale/).
 
+In addition, make sure that you understand the pricing model for Application Insights, because you are charged based on data volume. If your application generates a large volume of telemetry, and you don't wish to perform sampling or aggregation of the data, then Application Insights may not be the appropriate choice. For more information, see [Manage pricing and data volume in Application Insights](/azure/application-insights/app-insights-pricing).
 
-    Throttles after 32k/sec. To avoid this, use sampling.
-        - Throttling can lead to lost data. (Client SDKs may try to resend)
-    Sampling - can be done in the server app (Adaptive sampling) or in AI (ingestion sampling)
-        - Ingestion sampling reduces storage but not telemetry traffic
-    - There is also a daily cap - this is only meant as a final protection against too much data
+For system and container metrics, consider using a time-series database such as **Prometheus** or **InfluxDB** running in the cluster. In this configuration, Prometheus or InfluxDB runs as a pod in the cluster. The pod scrapes either Heapster or kube-state-metrics for metrics. Use a dashboard tool such as **Kibana** or **Grafana** to visualize and monitor the data. These can also run as containers in the cluster.
 
-    Application Insights will automatically go into adaptive sampling mode when ingest throughput is exceeded (this will cap at 32k ops/sec for the largest plan).  This will result in accurate metrics, but only a portion of the raw data being captured.  
-    
-    Built in correlation features    
+For application logs, consider using **Fluentd** and **Elasticsearch**. Fluentd is an open source data collector, and Elasticsearch is a document database that is highly optimized to act as a search engine. In this approach, each service sends logs to `stdout` and `stderr`, and Kubernetes writes these streams to the local file system. Fluentd collects the logs, optionally enriches them with additional metadata from Kubernetes, and sends the logs to Elasticsearch. Use Kibana, Grafana, or a similar tool to create a dashboard for Elasticsearch. Fluentd runs as a daemonset in the cluster, which ensures that one Fluentd pod is assigned to each node. You can configure Fluentd to collect kubelet logs as well as container logs. 
 
-
-Prometheus - time series database 
-    - Integrated with kubernetes
-    - linkerd / istio integration
-    - Does not support string data, only floats
-
-Influxdb
-
-    influxdb allow automatic downsampling to retain old data at a lower fidelity (masimms)
-    Supports string data + metrics
-    Horizontal scaling is only supported in the commercial version
-
-Grafana - dashboard
-
-Zipkin? - distributed tracing
-
-
-
-## Our architecture
-
-System metrics captured by kubernetes and sent to prometheus with grafana
-    - Prometheus log apis for app metrics and exporter for system metrics 
-
-Application logs go to standard out, kubelet (?) writes to local file system, fluentd ships the logs to elasticsearch running in the cluster
-
-
-
-## Best practices
-
-Use labels to distinguish types of pods (front end, application, gateway, infrastructure services)
-
-
-
-
-
-AI
-
-Log all services to the same AI instance and use cloud_RoleName field to filter by service.
-
-https://docs.microsoft.com/en-us/azure/application-insights/app-insights-monitor-multi-role-app
-
-AI uses correlation IDs - All services should propagate this. 
-
-https://docs.microsoft.com/en-us/azure/application-insights/application-insights-correlation
-
-Using AI at scale: https://blogs.msdn.microsoft.com/azurecat/2017/05/11/azure-monitoring-and-analytics-at-scale/
+One advantage of this approach is that services do not require any additional library dependencies. Each service just writes to `stdout` and `stderr`, and Fluentd handles exporting the logs into Elasticsearch. (It's still a good practice to use some kind of logging library or abstraction, to keep your code clean and modularized.) Also, the teams writing services don't need to understand how to configure the logging infrastructure. One challenge is to configure the Elasticsearch cluster for a production deployment, so that is scales to handle your traffic. You will also need to implement log rotation.
 
 
 <!-- links -->
