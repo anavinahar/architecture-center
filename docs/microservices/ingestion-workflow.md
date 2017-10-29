@@ -4,6 +4,8 @@ In this section, we describe how the Drone Delivery application handles incoming
 
 ![](./images/ingestion-workflow.png)
 
+## The drone delivery workflow
+
 When you decompose and application in microservices, it's common for a single operation to consist of multiple steps that span services. In the Drone Delivery application, scheduling a new delivery requires the following steps:
 
 1. Check the status of the customer's account (Account service).
@@ -12,13 +14,15 @@ When you decompose and application in microservices, it's common for a single op
 4. Schedule a drone for pickup (Drone service).
 5. Create a new delivery entity (Delivery service).
 
-## Challenges
+This is the core of the entire application, so the end-to-end process must be performant as well as reliable. Here are some of the particular challenges that must be addressed:
 
 - **Load leveling**. Too many client requests can overwhelm the system with inter-service network traffic. It can also overwhelm backend dependencies such as storage or remote services. These may react by throttling the services calling them, creating back pressure in the system. Therefore, it's important to load level the requests coming into the system, by putting them into a buffer or queue for processing. 
 
 - **Guaranteed delivery**. To avoid dropping any client requests, the ingestion component must guarantee at-least-once delivery of messages. 
 
-- **Error handling**. If any of the services returns an error code or experiences a non-transient failure, the delivery cannot be scheduled. An error code might indicate an expected error condition &mdash; for example, the customer's account is suspended mdash; or an unexpected server error (HTTP 5xx). A service might also be unavailable, causing the network call to time out. 
+- **Error handling**. If any of the services returns an error code or experiences a non-transient failure, the delivery cannot be scheduled. An error code might indicate an expected error condition (for example, the customer's account is suspended) or an unexpected server error (HTTP 5xx). A service might also be unavailable, causing the network call to time out. 
+
+First we'll look the ingestion side of the equation &mdash; how the system can ingest incoming user requests at high throughput. Then we'll consider how the drone delivery application can implement a reliable workflow. It turns out that the design of the ingestion subsystem affects the workflow backend. 
 
 ## Ingestion
 
