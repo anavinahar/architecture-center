@@ -10,7 +10,7 @@ In a microservices architecture, how should a client communicate with the variou
 
 - A single operation might require calls to multiple services. That can result in multiple network round trips between the client and the server, adding significant latency. 
 - It can result in complex client code. The client must keep track of multiple endpoints, and handle failures in a resilient way. 
-- It creates coupling between the client and the services that it calls, making it harder to refactor services.
+- It creates coupling between the client and the backend. The client needs to know how the individual services are decomposed. That makes it harder to maintain the client and also harder to refactor services.
 - Each individual service must handle concerns such as authentication, SSL, and client rate limiting. 
 - Services must expose a client-friendly protocol such as HTTP or WebSocket. This limits the choice of [communication protocols](./interservice-communication.md) 
 
@@ -56,16 +56,20 @@ When choosing a gateway technology, consider the following:
 
 ### Deploying Nginx or HAProxy to Kubernetes
 
-You can deploy Nginx or HAProxy to Kubernetes by creating a [Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) object. 
+You can deploy Nginx or HAProxy to Kubernetes by creating a ReplicaSet or DaemonSet that specifies the Nginx or HAProxy container image. 
 
-- To achieve high availability, set the replica count higher than 1 for redundacy.  
+- To achieve high availability, set the replica count higher than 1 for redundacy. The gateway is a potential bottleneck or single point of failure in the system, so it's crucial that the gateway be scalable and high available.
+
 - Create a service of type LoadBalancer to expose the gateway through an Azure Load Balancer
+
 - Use a ConfigMap to store the configuration file for the proxy, and mount the ConfigMap as a volume. 
+
 - Configure a readiness probe that serves a static file from the gateway (rather than routing to another service).
 
 Another alternative is to use an **Ingress Controller**. This lets you configure the reverse proxy as a Kubernetes resource. An Ingress Controller actually involves two separate Kubernetes resources, the *Ingress* and the *Ingress Controller*.
 
 - The Ingress is a resource that defines the configuration for the reverse proxy, such as routing rules, TLS certificates, and...
+
 - The Ingress Controller performs the reverse proxying. Several implementations exist, including Nginx and HAProxy. The Ingress Controller watches the Ingress resource and updates the reverse proxy as needed.
 
 An advantage of using an Ingress Controller is that it abstracts the ingress rules from the implementation details of the reverse proxy. You don't need to manage configuration files or container images. Ingress Controllers are still a beta feature of Kubernetes at the time of this writing, and the feature will continue to evolve.
@@ -80,7 +84,7 @@ Consider running the gateway on a dedicated set of nodes in the cluster. Benefit
 
 - Load balancing. You can configure the external load balancer so that requests always go to a gateway node. That can save a network hop, which would otherwise happen whenever a request lands on a node that isn't running a gateway pod. This consideration applies mainly to large clusters, where the gateway runs on a relatively small fraction of the total nodes.   
 
-In Azure Container Service, this approach currently requires [ACS Engine](https://github.com/Azure/acs-engine)) which allows you to create multiple agent pools.
+In Azure Container Service (ACS), this approach currently requires [ACS Engine](https://github.com/Azure/acs-engine)) which allows you to create multiple agent pools.
 
 ### Azure Application Gateway
 

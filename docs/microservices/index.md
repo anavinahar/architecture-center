@@ -43,7 +43,7 @@ Done correctly, microservices can provide a number of useful benefits:
 - Because services are deployed independently, bug fixes and feature releases are more manageable and less risky. You can update a service without redeploying the entire application, and roll back an update if something goes wrong. 
 - A single development team can build, test, and deploy a service. By not sharing code or data stores, dependencies between services are minimized. That makes it easier to add new features. 
 - Teams can pick the technology that best fits their service, using a mix of technology stacks as appropriate. 
-- If a service goes down, it won't take out the entire application. 
+- If a service goes down, it won't take out the entire application.
 - Services can be scaled independently. At the same time, by running services in containers, it's possible to pack a higher density of services onto a single VM. 
 
 These benefits don't come for free. Some of the challenges when adopting a microservices architecture include:

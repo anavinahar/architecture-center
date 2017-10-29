@@ -23,6 +23,7 @@ There are tradeoffs to each approach. Calling an API is a simple, well-understoo
 However, there are also some challenges to using asychronous messaging effectively.
 
 - Using a particular messaging infrastructure may cause tight coupling with that infrastructure. It will be difficult to switch to another messaging infrastructure later.
+- End-to-end latency may be higher. 
 - The messaging infrastructure incurs additional cost. At high throughputs, the cost could become significant.
 - Handling asynchronous messaging is not a trivial task. For example, you must handle duplicated messages, either by de-duplicating or by making operations idempotent. 
 - Asynchronous messages don't work well for request-response semantics. 

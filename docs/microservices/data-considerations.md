@@ -18,7 +18,7 @@ This approach naturally leads to [polyglot persistence](https://martinfowler.com
 
 ## Challenges
 
-Some challenges arise from this distributed approach to managing data. First, there may be redundancy across the data stores, with the same item of data appearing in mulitple places. For example, data might be stored as part of a transaction, then stored elsewhere for analytics, reporting, or archiving. Duplicated data can lead to issues of data integrity and consistency. 
+Some challenges arise from this distributed approach to managing data. First, there may be redundancy across the data stores, with the same item of data appearing in mulitple places. For example, data might be stored as part of a transaction, then stored elsewhere for analytics, reporting, or archiving. Duplicated or partitioned data can lead to issues of data integrity and consistency. When data relationships span multiple services, you can't use traditional data management techniques to enforce the relationships.
 
 Traditional data modeling uses the rule of "one fact in one place." Every entity appears exactly once in the schema. Other entities may hold references to it but not duplicate it. The obvious advantage to the traditional approach is that updates are made in a single place, which avoids problems with data consistency. In a microservices architecture, you have to consider how updates are propaged across services, and how to manage eventual consistency when data appears in multiple places without strong consistency. 
 
@@ -36,7 +36,7 @@ There is no single approach that's correct in all cases, but here are some gener
 
 - Consider whether your services are coherent and loosely coupled. If two services are continually exchaning information with each other, resulting in chatty APIs, you may need to redraw your service boundaries, by merging two services or refactoring their functionality.
 
-- Use an [event driven architecture](../guide/architecture-styles/event-driven.md). In this archtecture style, a service sends an event whenever it updates its own data store. Interested services can subscribe to this event. For example, another service could use the events to construct a materialized view of the data that is more suitable for querying.
+- Use an [event driven architecture style](../guide/architecture-styles/event-driven.md). In this archtecture style, a service publishes an event there are changes to its public models or entities. Interested services can subscribe to these events. For example, another service could use the events to construct a materialized view of the data that is more suitable for querying.
 
 - A service that sends events should publish a schema that can be used to automate serializing and deserializing events, to avoid tight coupling between publishers and subscribers. Consider JSON schema or a framework like [Microsoft Bond](https://github.com/Microsoft/bond), Protobuf, or Avro. Think about how you will version the event schema. 
  
