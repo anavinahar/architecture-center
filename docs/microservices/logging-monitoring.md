@@ -27,7 +27,9 @@ The article [Monitoring and diagnostics](../best-practices/monitoring.md) descri
 **Ingestion rate**. What is the throughput at which the system can ingest telemetry events? What happens if that rate is exceeded? For example, the system may throttle clients, in which case telemetry data is lost, or it may downsample the data. Sometimes you can mitigate this problem by reducing the amount of data that you collect:
 
   - Aggregate metrics by calculating statistics, such as average and standard deviation, and send that statistical data to the monitoring system.  
+
   - Downsample the data &mdash; that is, process only a percentage of the events.   
+
   - Batch to reduce the number of network calls to the monitoring service
         
    Of course, all of these techniques make your telemetry system more complex. If you implement any of these, consider putting that functionality into a [Sidecar](../patterns/sidecar.md). That way, you can write the code once, and every service can take advantage of it.
