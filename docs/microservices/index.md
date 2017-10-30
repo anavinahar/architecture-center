@@ -12,9 +12,7 @@ In this set of articles, we explore how to build and run a microservices archite
 
 Throughout, we focus on an end-to-end scenario: A drone delivery service that lets customers schedule packages to be picked up and delivered via drone. But first, let's start with fundamentals. What are microservices, and what are the advantages of adopting a microservices architecture?
 
-
-	
-## What is a microservices architecture?
+## Why build microservices?
 
 In a microservices architecture, the application is composed of small, independent services. Here are some of the defining characteristics of microservices:
 
@@ -38,7 +36,7 @@ Done correctly, microservices can provide a number of useful benefits:
 - **Scalability.** At cloud scale, you would like the ability to scale out the parts of the application that are especially resource intensive, without scaling out the entire application. With microservices, services can be scaled independently. At the same time, by running services in containers, you pack a higher density of service instances onto a single VM. 
 
 
-## Challenges of microservices
+## No free lunch
 
 These benefits don't come for free. Some of the challenges when adopting a microservices architecture include:
 
